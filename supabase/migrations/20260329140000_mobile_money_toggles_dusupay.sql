@@ -1,0 +1,129 @@
+-- Super-admin toggles: mobile money (master), Pawapay, DusuPay
+INSERT INTO public.app_config (key, value, description)
+VALUES
+  ('mobile_money_payments_enabled', 'false'::jsonb, 'Master switch: show mobile money checkout (Pawapay / DusuPay) when at least one provider is enabled'),
+  ('pawapay_enabled', 'false'::jsonb, 'Allow Pawapay payment flows (requires mobile_money_payments_enabled)'),
+  ('dusupay_enabled', 'false'::jsonb, 'Allow DusuPay payment flows (requires mobile_money_payments_enabled)')
+ON CONFLICT (key) DO NOTHING;
+
+-- DusuPay intents (merchant_reference is our id sent to DusuPay)
+CREATE TABLE IF NOT EXISTS public.dusupay_payment_intents (
+  merchant_reference TEXT PRIMARY KEY,
+  metadata JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  processed_at TIMESTAMPTZ
+);
+
+ALTER TABLE public.dusupay_payment_intents ENABLE ROW LEVEL SECURITY;
+
+COMMENT ON TABLE public.dusupay_payment_intents IS 'Maps DusuPay merchant_reference to checkout metadata; Edge Functions use service role only.';
+
+ALTER TABLE public.tickets
+  ADD COLUMN IF NOT EXISTS dusupay_merchant_reference TEXT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tickets_dusupay_merchant_ref_unique
+  ON public.tickets (dusupay_merchant_reference, event_id, ticket_type)
+  WHERE dusupay_merchant_reference IS NOT NULL;
+
+ALTER TABLE public.tips
+  ADD COLUMN IF NOT EXISTS dusupay_merchant_reference TEXT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tips_dusupay_merchant_ref_unique
+  ON public.tips (dusupay_merchant_reference)
+  WHERE dusupay_merchant_reference IS NOT NULL;
+
+-- Extend update_app_config descriptions for new keys
+CREATE OR REPLACE FUNCTION update_app_config(
+  config_key TEXT,
+  config_value BOOLEAN
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  config_description TEXT;
+  has_description BOOLEAN;
+  record_exists BOOLEAN;
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM public.profiles
+    WHERE profiles.id = auth.uid()
+    AND (
+      profiles.user_type IN ('super_admin', 'global_admin')
+      OR profiles.id = 'f20cd4f3-4779-4b21-aa79-7d8ce5e02ed8'::uuid
+    )
+  ) THEN
+    RAISE EXCEPTION 'Only platform admins (super or global) can update app config';
+  END IF;
+
+  SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+    AND table_name = 'app_config'
+    AND column_name = 'description'
+  ) INTO has_description;
+
+  SELECT EXISTS (
+    SELECT 1 FROM public.app_config WHERE key = config_key
+  ) INTO record_exists;
+
+  config_description := CASE config_key
+    WHEN 'artist_login_enabled' THEN 'Enable/disable artist signup option'
+    WHEN 'live_chat_enabled' THEN 'Enable/disable chat in live events'
+    WHEN 'recording_enabled' THEN 'Enable/disable event recording feature'
+    WHEN 'artist_recordings_visible' THEN 'Control visibility of recordings to artists'
+    WHEN 'advertisements_home_enabled' THEN 'Enable/disable advertisements on the Home page'
+    WHEN 'visitor_counter_visible' THEN 'Enable/disable visitor counter visibility in the navbar'
+    WHEN 'visitor_count_base' THEN 'Base/starting number for visitor counter'
+    WHEN 'gift_enabled' THEN 'Enable/disable the gift button in live events'
+    WHEN 'creator_studio_analytics_enabled' THEN 'Enable/disable analytics tab in Creator Studio'
+    WHEN 'platform_revenue_percentage' THEN 'Percentage of revenue kept by platform for maintenance (0-100)'
+    WHEN 'artist_revenue_percentage' THEN 'Percentage of revenue paid to artist after live event (0-100)'
+    WHEN 'live_event_notifications_enabled' THEN 'Enable/disable in-app notifications when live events start'
+    WHEN 'live_event_email_notify_admins' THEN 'Send email notifications to admins when live events start'
+    WHEN 'live_event_email_notify_artists' THEN 'Send email notifications to artists when live events start'
+    WHEN 'live_event_email_notify_fans' THEN 'Send email notifications to fans (regular users) when live events start'
+    WHEN 'event_scheduled_phone_notify_followers' THEN 'Send phone notifications to users following an artist when that artist schedules an event'
+    WHEN 'event_scheduled_phone_notify_all' THEN 'Send phone notifications to all users when any artist schedules an event'
+    WHEN 'live_event_started_phone_notify_followers' THEN 'Send phone notifications to users following an artist when that artist starts a live event'
+    WHEN 'live_event_started_phone_notify_all' THEN 'Send phone notifications to all users when any artist starts a live event'
+    WHEN 'auth_gate_enabled' THEN 'Show sign-in/sign-up pop-up when a guest clicks anywhere on the site'
+    WHEN 'artist_management_communication_enabled' THEN 'Enable Communication section in Artist Management (send in-app notifications to artists)'
+    WHEN 'bundles_enabled' THEN 'Enable ticket bundles platform-wide: Bundles page, cart bundle offer, and Use 1 credit on event pages'
+    WHEN 'replays_enabled' THEN 'Enable replays platform-wide: Replays page and watch-on-demand purchase'
+    WHEN 'live_replay_bundle_enabled' THEN 'Show Live + Replay bundle payment option on event Watch pages'
+    WHEN 'artist_application_enabled' THEN 'Show "Are you an Artist?" application buttons in Navbar and on Home page'
+    WHEN 'mobile_money_payments_enabled' THEN 'Master switch for mobile money (Pawapay / DusuPay) checkout on web'
+    WHEN 'pawapay_enabled' THEN 'Enable Pawapay as a mobile money provider (requires master mobile money switch)'
+    WHEN 'dusupay_enabled' THEN 'Enable DusuPay as a mobile money provider (requires master mobile money switch)'
+    ELSE 'Application configuration'
+  END;
+
+  IF record_exists THEN
+    IF has_description THEN
+      UPDATE public.app_config
+      SET
+        value = config_value::jsonb,
+        description = config_description,
+        updated_at = NOW()
+      WHERE key = config_key;
+    ELSE
+      UPDATE public.app_config
+      SET
+        value = config_value::jsonb,
+        updated_at = NOW()
+      WHERE key = config_key;
+    END IF;
+  ELSE
+    IF has_description THEN
+      INSERT INTO public.app_config (key, value, description)
+      VALUES (config_key, config_value::jsonb, config_description);
+    ELSE
+      INSERT INTO public.app_config (key, value)
+      VALUES (config_key, config_value::jsonb);
+    END IF;
+  END IF;
+END;
+$$;

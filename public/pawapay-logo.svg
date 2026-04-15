@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 48" role="img" aria-labelledby="pawapayTitle">
+  <title id="pawapayTitle">PawaPay</title>
+  <defs>
+    <linearGradient id="ppg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#00C853"/>
+      <stop offset="100%" stop-color="#008C3A"/>
+    </linearGradient>
+  </defs>
+  <rect width="260" height="48" rx="10" fill="#0d1117" stroke="rgba(255,255,255,0.12)" stroke-width="1"/>
+  <circle cx="26" cy="24" r="14" fill="url(#ppg)"/>
+  <circle cx="26" cy="24" r="5" fill="#0d1117"/>
+  <text x="48" y="31" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="19" font-weight="700" fill="#f0fdf4" letter-spacing="-0.03em">pawaPay</text>
+</svg>

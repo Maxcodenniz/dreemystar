@@ -1,0 +1,4 @@
+# Matches your hosted Supabase Postgres version (stops `supabase link` / `db` warnings).
+# Remote project uses Postgres 15 (see Dashboard → Settings → Database).
+[db]
+major_version = 15
