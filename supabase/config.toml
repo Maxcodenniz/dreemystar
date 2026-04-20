@@ -2,3 +2,9 @@
 # Remote project uses Postgres 15 (see Dashboard → Settings → Database).
 [db]
 major_version = 15
+
+# Stripe calls this URL with Stripe-Signature only — no Supabase JWT. Without this, the
+# gateway returns 401 before the function runs. Redeploy after changing: 
+#   supabase functions deploy stripe-webhook
+[functions.stripe-webhook]
+verify_jwt = false
