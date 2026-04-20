@@ -1,5 +1,9 @@
 import { supabase } from '../lib/supabaseClient';
 import { useStore } from '../store/useStore';
+import { devLogBackendFailure } from './devBackendLog';
+import { withTimeout } from './eventsFetch';
+
+const PROFILE_LOAD_MS = 5_000;
 
 /**
  * Subscribes to Supabase auth for the app lifetime so the Zustand store stays
@@ -23,17 +27,17 @@ export function subscribeAuthToStore(): { unsubscribe: () => void } {
     store.setUser(session.user);
 
     try {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', session.user.id)
-        .maybeSingle();
+      const { data: profile } = await withTimeout(
+        supabase.from('profiles').select('*').eq('id', session.user.id).maybeSingle(),
+        PROFILE_LOAD_MS,
+        'authSync.profile'
+      );
 
       if (profile) {
         store.setUserProfile(profile);
       }
-    } catch {
-      // Profile may appear later; SignInForm can still retry with backoff
+    } catch (e) {
+      devLogBackendFailure('authSync.onAuthStateChange.profile', e, { userId: session.user.id });
     }
   });
 

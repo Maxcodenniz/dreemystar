@@ -270,7 +270,7 @@ const Cart: React.FC = () => {
       if (data.sessionId) {
         // Fallback: redirect to Stripe checkout with session ID
         const stripe = await import('@stripe/stripe-js');
-        const stripePromise = stripe.loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || '');
+        const stripePromise = stripe.loadStripe(import.meta.env.VITE_STRIPE_PUBLIC_KEY || '');
         const stripeInstance = await stripePromise;
         if (stripeInstance) {
           await stripeInstance.redirectToCheckout({ sessionId: data.sessionId });
@@ -462,7 +462,7 @@ const Cart: React.FC = () => {
       }
       if (data?.sessionId) {
         const stripe = await import('@stripe/stripe-js');
-        const stripeInstance = await stripe.loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || '');
+        const stripeInstance = await stripe.loadStripe(import.meta.env.VITE_STRIPE_PUBLIC_KEY || '');
         if (stripeInstance) await stripeInstance.redirectToCheckout({ sessionId: data.sessionId });
       }
     } catch (err: any) {

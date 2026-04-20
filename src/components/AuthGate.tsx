@@ -35,19 +35,42 @@ export default function AuthGate() {
       return;
     }
     let cancelled = false;
+    let settled = false;
+    const failSafe = window.setTimeout(() => {
+      if (!cancelled && !settled) {
+        settled = true;
+        setAuthGateEnabled(false);
+      }
+    }, 5_000);
+
     (async () => {
-      const { data } = await supabase
-        .from('app_config')
-        .select('value')
-        .eq('key', 'auth_gate_enabled')
-        .single();
-      if (!cancelled) {
+      try {
+        const { data, error } = await supabase
+          .from('app_config')
+          .select('value')
+          .eq('key', 'auth_gate_enabled')
+          .maybeSingle();
+        if (cancelled) return;
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(failSafe);
+        if (error && error.code !== 'PGRST116') {
+          setAuthGateEnabled(false);
+          return;
+        }
         const enabled = data?.value === true || data?.value === 'true';
         setAuthGateEnabled(enabled);
+      } catch {
+        if (cancelled || settled) return;
+        settled = true;
+        window.clearTimeout(failSafe);
+        setAuthGateEnabled(false);
       }
     })();
+
     return () => {
       cancelled = true;
+      window.clearTimeout(failSafe);
     };
   }, [user, isAuthPath, dismissed]);
 

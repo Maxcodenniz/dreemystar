@@ -44,7 +44,9 @@ Deno.serve(async (req) => {
       return new Response(`Webhook signature verification failed: ${error.message}`, { status: 400 });
     }
 
-    EdgeRuntime.waitUntil(handleEvent(event));
+    // Await ticket creation before 200 so Stripe retries on failure; do not use waitUntil-only
+    // (otherwise a crash after the response leaves customers paid with no tickets).
+    await handleEvent(event);
 
     return Response.json({ received: true });
   } catch (error: any) {
@@ -126,15 +128,19 @@ async function handleEvent(event: Stripe.Event) {
         
         console.log(`📧 Final sessionCustomerEmail: ${sessionCustomerEmail || 'null'}`);
 
+        const normalizedPurchaserEmail = sessionCustomerEmail
+          ? sessionCustomerEmail.trim().toLowerCase()
+          : null;
+
         // Get customer ID from metadata or try to find by email
         let customerIdForOrder: string | null = null;
         if (metadata?.userId) {
           customerIdForOrder = metadata.userId;
-        } else if (sessionCustomerEmail) {
+        } else if (normalizedPurchaserEmail) {
           const { data: profile } = await supabase
             .from('profiles')
             .select('id')
-            .eq('email', sessionCustomerEmail)
+            .ilike('email', normalizedPurchaserEmail)
             .maybeSingle();
           customerIdForOrder = profile?.id || null;
         }
@@ -153,7 +159,7 @@ async function handleEvent(event: Stripe.Event) {
 
         if (orderError) {
           console.error('Error inserting order:', orderError);
-          return;
+          throw orderError;
         }
         console.info(`Processed payment for session: ${checkout_session_id}`);
 
@@ -266,7 +272,7 @@ async function handleEvent(event: Stripe.Event) {
                 .insert({
                   event_id: eventId,
                   user_id: bundleUserId,
-                  email: sessionCustomerEmail || null,
+                  email: normalizedPurchaserEmail,
                   phone: ticketPhone,
                   stripe_payment_id: payment_intent,
                   stripe_session_id: checkout_session_id,
@@ -277,13 +283,17 @@ async function handleEvent(event: Stripe.Event) {
                 .single();
               if (!ticketErr && ticket) {
                 ticketsCreated++;
-                if (sessionCustomerEmail) {
+                if (sessionCustomerEmail || normalizedPurchaserEmail) {
                   try {
                     const emailFunctionUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1/send-ticket-confirmation`;
                     await fetch(emailFunctionUrl, {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}` },
-                      body: JSON.stringify({ ticketId: ticket.id, eventId: ticket.event_id, email: sessionCustomerEmail }),
+                      body: JSON.stringify({
+                        ticketId: ticket.id,
+                        eventId: ticket.event_id,
+                        email: sessionCustomerEmail || normalizedPurchaserEmail,
+                      }),
                     });
                   } catch (e) {
                     console.warn('Send ticket confirmation failed for bundle ticket', e);
@@ -312,16 +322,9 @@ async function handleEvent(event: Stripe.Event) {
           console.warn('⚠️ Metadata found but no eventId or eventIds - cannot create tickets');
           console.warn('⚠️ Metadata keys:', Object.keys(metadata));
         } else {
-          // Idempotency: if tickets for this checkout session already exist, skip creation.
-          const { data: existingBySession } = await supabase
-            .from('tickets')
-            .select('id')
-            .eq('stripe_session_id', checkout_session_id)
-            .limit(1);
-          if (existingBySession && existingBySession.length > 0) {
-            console.info(`Stripe webhook: tickets for session ${checkout_session_id} already exist — skipping (idempotent)`);
-            return;
-          }
+          // Per-row idempotency: unique index on (stripe_session_id, event_id, ticket_type) + 23505 handling.
+          // Do NOT skip the whole session if any ticket exists — that breaks multi-event carts and retries
+          // after a partial insert (only some events would get tickets).
 
           const eventIds = metadata.eventIds 
             ? metadata.eventIds.split(',').filter((id: string) => id.trim())
@@ -334,11 +337,11 @@ async function handleEvent(event: Stripe.Event) {
           let userId: string | null = null;
           if (metadata.userId) {
             userId = metadata.userId;
-          } else if (sessionCustomerEmail) {
+          } else if (normalizedPurchaserEmail) {
             const { data: profile } = await supabase
               .from('profiles')
               .select('id')
-              .eq('email', sessionCustomerEmail)
+              .ilike('email', normalizedPurchaserEmail)
               .maybeSingle();
             userId = profile?.id || null;
           }
@@ -354,7 +357,7 @@ async function handleEvent(event: Stripe.Event) {
                 .insert({
                   event_id: eventId,
                   user_id: userId,
-                  email: sessionCustomerEmail || null,
+                  email: normalizedPurchaserEmail,
                   phone: ticketPhone,
                   stripe_payment_id: payment_intent,
                   stripe_session_id: checkout_session_id,
@@ -365,11 +368,12 @@ async function handleEvent(event: Stripe.Event) {
                 .single();
 
               if (ticketError) {
-                // Unique constraint violation = duplicate → idempotent skip
+                // Unique constraint violation = duplicate webhook delivery → idempotent skip
                 if (ticketError.code === '23505') {
                   console.info(`Ticket for event ${eventId} (${t}) already exists — skipped`);
                 } else {
                   console.error(`Error creating ticket for event ${eventId} (${t}):`, ticketError);
+                  throw ticketError;
                 }
               } else {
                 console.info(`✅ Created ticket ${ticket.id} for event ${eventId} (${t})`);
@@ -389,7 +393,7 @@ async function handleEvent(event: Stripe.Event) {
           }
 
           // Send confirmation emails
-          if (tickets.length > 0 && sessionCustomerEmail) {
+          if (tickets.length > 0 && (sessionCustomerEmail || normalizedPurchaserEmail)) {
             try {
               const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
               const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -405,7 +409,7 @@ async function handleEvent(event: Stripe.Event) {
                   body: JSON.stringify({
                     ticketId: ticket.id,
                     eventId: ticket.event_id,
-                    email: sessionCustomerEmail,
+                    email: sessionCustomerEmail || normalizedPurchaserEmail,
                   }),
                 });
 
@@ -423,6 +427,7 @@ async function handleEvent(event: Stripe.Event) {
         }
       } catch (error) {
         console.error('Error processing one-time payment:', error);
+        throw error;
       }
       return; // Exit early after processing payment
     }

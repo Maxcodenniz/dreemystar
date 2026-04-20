@@ -1,47 +1,39 @@
+import { devLogBackendFailure } from './devBackendLog';
+import { UX_DELAY_MS } from './uxDelayMs';
+
 const PROFILE_COLUMNS = 'id, username, full_name, avatar_url, artist_type, genres';
 
-/**
- * Hard cap for the combined events+profiles fetch. This does **not** fix slow Supabase —
- * it only avoids an infinite spinner. Healthy loads should complete in a few seconds.
- * If you routinely hit this, fix the cause (RLS/indexes/project region/env), do not raise this number.
- */
-export const DEFAULT_EVENTS_FETCH_MS = 15_000;
+/** Max time for the `events` table query — failures here need fixing (env, RLS, network), not only more ms. */
+const EVENTS_QUERY_MS = 10_000;
 
-/** Second attempt only helps rare transient blips; default is one try to avoid doubling a bad latency. */
-export const DEFAULT_EVENTS_MAX_ATTEMPTS = 1;
+/** Max time for the batched `profiles` query — must not block listing events. */
+const PROFILES_QUERY_MS = 5_000;
+
+/** Last-resort: only `events` rows (same query as primary; avoids double penalty from profiles). */
+const EVENTS_ONLY_FALLBACK_MS = 12_000;
 
 /**
- * Two requests instead of one embedded select — often faster when RLS on nested `profiles` is heavy.
- * If the profiles batch fails, we still return events with `artist_id` so the UI can render.
+ * Retry the merged pipeline (not the emergency path).
+ * Dev / slow networks: helps transient blips.
  */
-export async function fetchEventsMerged(client: any): Promise<any[]> {
-  const { data: rows, error: e1 } = await client
+export const DEFAULT_EVENTS_MAX_ATTEMPTS = 2;
+
+async function runEventsQuery(client: any): Promise<any[]> {
+  const { data, error } = await client
     .from('events')
     .select('*')
     .neq('status', 'ended')
     .order('start_time', { ascending: true });
-  if (e1) throw e1;
-  const list = rows || [];
-  const ids = [...new Set(list.map((r: any) => r.artist_id).filter(Boolean))] as string[];
-  if (ids.length === 0) {
-    return list.map((e: any) => ({ ...e, profiles: null }));
+  if (error) {
+    devLogBackendFailure('eventsFetch.runEventsQuery', error);
+    throw error;
   }
-  const { data: profs, error: e2 } = await client
-    .from('profiles')
-    .select(PROFILE_COLUMNS)
-    .in('id', ids);
-  if (e2) {
-    console.warn('[eventsFetch] profiles batch failed; continuing without artist details', e2);
-    return list.map((e: any) => ({ ...e, profiles: null }));
-  }
-  const map: Record<string, any> = {};
-  (profs || []).forEach((p: any) => {
-    map[p.id] = p;
-  });
-  return list.map((e: any) => ({
-    ...e,
-    profiles: e.artist_id ? map[e.artist_id] ?? null : null,
-  }));
+  return data || [];
+}
+
+async function runProfilesBatch(client: any, ids: string[]) {
+  const { data, error } = await client.from('profiles').select(PROFILE_COLUMNS).in('id', ids);
+  return { data, error };
 }
 
 export function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -53,30 +45,80 @@ export function withTimeout<T>(promise: Promise<T>, ms: number, label: string): 
   ]);
 }
 
+/**
+ * Two requests with separate timeouts — a slow profiles batch cannot fail the whole home page.
+ * If the profiles batch fails or times out, events still return with `profiles: null` (UI has fallbacks).
+ */
+export async function fetchEventsMerged(client: any): Promise<any[]> {
+  const rows = await withTimeout(runEventsQuery(client), EVENTS_QUERY_MS, 'Events list');
+  const list = rows || [];
+  const ids = [...new Set(list.map((r: any) => r.artist_id).filter(Boolean))] as string[];
+  if (ids.length === 0) {
+    return list.map((e: any) => ({ ...e, profiles: null }));
+  }
+
+  try {
+    const profRes = await withTimeout(runProfilesBatch(client, ids), PROFILES_QUERY_MS, 'Profiles batch');
+    const { data: profs, error: e2 } = profRes;
+    if (e2) {
+      console.warn('[eventsFetch] profiles batch error; continuing without artist details', e2);
+      return list.map((e: any) => ({ ...e, profiles: null }));
+    }
+    const map: Record<string, any> = {};
+    (profs || []).forEach((p: any) => {
+      map[p.id] = p;
+    });
+    return list.map((e: any) => ({
+      ...e,
+      profiles: e.artist_id ? map[e.artist_id] ?? null : null,
+    }));
+  } catch (e) {
+    console.warn('[eventsFetch] profiles batch timed out or failed; continuing without artist details', e);
+    return list.map((e: any) => ({ ...e, profiles: null }));
+  }
+}
+
+/** Single query to `events` only — used when merged pipeline fails completely. */
+export async function fetchEventsRowsOnlyFallback(client: any): Promise<any[]> {
+  const rows = await withTimeout(runEventsQuery(client), EVENTS_ONLY_FALLBACK_MS, 'Events only');
+  return (rows || []).map((e: any) => ({ ...e, profiles: null }));
+}
+
 export async function fetchEventsMergedWithRetry(
   client: any,
-  options?: { timeoutMs?: number; maxAttempts?: number }
+  options?: { maxAttempts?: number }
 ): Promise<any[]> {
-  const timeoutMs = options?.timeoutMs ?? DEFAULT_EVENTS_FETCH_MS;
   const maxAttempts = options?.maxAttempts ?? DEFAULT_EVENTS_MAX_ATTEMPTS;
-  let data: any[] | null = null;
+  let lastError: unknown;
+
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
-      data = await withTimeout(
-        fetchEventsMerged(client),
-        timeoutMs,
-        'Events request'
-      );
-      break;
+      return await fetchEventsMerged(client);
     } catch (err) {
+      lastError = err;
+      devLogBackendFailure('eventsFetch.fetchEventsMergedWithRetry.attempt', err, {
+        attempt: attempt + 1,
+        maxAttempts,
+      });
       const msg = err instanceof Error ? err.message : String(err);
-      const isTimeout = msg.includes('timed out');
-      if (attempt < maxAttempts - 1 && isTimeout) {
-        await new Promise((r) => setTimeout(r, 1000));
+      const retryable = /timed out|Events list|Failed to fetch|NetworkError|Load failed/i.test(msg);
+      if (attempt < maxAttempts - 1 && retryable) {
+        await new Promise((r) => setTimeout(r, UX_DELAY_MS));
         continue;
       }
-      throw err;
+      break;
     }
   }
-  return data ?? [];
+
+  try {
+    if (import.meta.env.DEV) {
+      console.warn('[eventsFetch] merged pipeline failed; trying events-only fallback', lastError);
+    }
+    return await fetchEventsRowsOnlyFallback(client);
+  } catch (fallbackErr) {
+    devLogBackendFailure('eventsFetch.fetchEventsRowsOnlyFallback', fallbackErr, {
+      previousError: lastError,
+    });
+    throw lastError ?? fallbackErr;
+  }
 }

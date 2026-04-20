@@ -42,7 +42,8 @@ const ShareButton: React.FC<ShareButtonProps> = ({
     return import.meta.env.VITE_SITE_URL || window.location.origin;
   };
 
-  const fullUrl = url.startsWith('http') ? url : `${getSiteUrl()}${url}`;
+  const path = typeof url === 'string' ? url : '';
+  const fullUrl = path.startsWith('http') ? path : `${getSiteUrl()}${path.startsWith('/') ? path : `/${path}`}`;
   const encodedUrl = encodeURIComponent(fullUrl);
   const encodedTitle = encodeURIComponent(title);
   const encodedDescription = encodeURIComponent(description);

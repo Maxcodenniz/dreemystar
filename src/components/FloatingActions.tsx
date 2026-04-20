@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ChevronUp, ChevronDown, RefreshCw } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { useStore } from '../store/useStore';
+import { UX_DELAY_MS } from '../utils/uxDelayMs';
 
 const FloatingActions: React.FC = () => {
   const [showTop, setShowTop] = useState(false);
@@ -46,7 +47,9 @@ const FloatingActions: React.FC = () => {
 
   const refreshPlatform = async () => {
     setIsRefreshing(true);
-    
+    const started = Date.now();
+    const minSpinnerMs = UX_DELAY_MS;
+
     try {
       const { supabase } = await import('../lib/supabaseClient');
       
@@ -74,8 +77,7 @@ const FloatingActions: React.FC = () => {
         detail: { timestamp: Date.now() }
       }));
 
-      // Small delay for visual feedback
-      await new Promise(resolve => setTimeout(resolve, 800));
+      await new Promise((r) => setTimeout(r, Math.max(0, minSpinnerMs - (Date.now() - started))));
     } catch (error) {
       console.error('Error refreshing platform:', error);
     } finally {

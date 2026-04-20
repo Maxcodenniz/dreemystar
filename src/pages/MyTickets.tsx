@@ -39,9 +39,7 @@ const MyTickets: React.FC = () => {
       setLoading(true);
       setError(null);
 
-      const { data: ticketsData, error: ticketsError } = await supabase
-        .from('tickets')
-        .select(`
+      const ticketSelect = `
           id,
           event_id,
           status,
@@ -56,13 +54,37 @@ const MyTickets: React.FC = () => {
               full_name
             )
           )
-        `)
-        .eq('user_id', user.id)
-        .order('purchase_date', { ascending: false });
+        `;
 
-      if (ticketsError) {
-        throw ticketsError;
-      }
+      const [{ data: byUserId, error: errUser }, { data: byEmail, error: errEmail }] = await Promise.all([
+        supabase
+          .from('tickets')
+          .select(ticketSelect)
+          .eq('user_id', user.id)
+          .order('purchase_date', { ascending: false }),
+        user.email
+          ? supabase
+              .from('tickets')
+              .select(ticketSelect)
+              .is('user_id', null)
+              .ilike('email', user.email.trim().toLowerCase())
+              .order('purchase_date', { ascending: false })
+          : Promise.resolve({ data: [] as any[], error: null }),
+      ]);
+
+      if (errUser) throw errUser;
+      if (errEmail) throw errEmail;
+
+      const seen = new Set<string>();
+      const ticketsData = [...(byUserId || []), ...(byEmail || [])]
+        .filter((t) => {
+          if (seen.has(t.id)) return false;
+          seen.add(t.id);
+          return true;
+        })
+        .sort(
+          (a, b) => new Date(b.purchase_date).getTime() - new Date(a.purchase_date).getTime()
+        );
 
       const formattedTickets = (ticketsData || []).map(ticket => ({
         id: ticket.id,

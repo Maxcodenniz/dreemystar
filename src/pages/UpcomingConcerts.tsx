@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { supabase } from '../lib/supabaseClient';
+import { supabase, isSupabaseConfigured } from '../lib/supabaseClient';
 import { fetchEventsMergedWithRetry } from '../utils/eventsFetch';
+import { formatSupabaseQueryError } from '../utils/formatSupabaseQueryError';
+import { devLogBackendFailure, devLogSupabaseNotConfiguredOnce } from '../utils/devBackendLog';
 import UpcomingConcertsComponent from '../components/UpcomingConcerts';
 import { Concert, Artist } from '../types';
 import { AlertCircle, Calendar } from 'lucide-react';
@@ -20,6 +22,11 @@ const UpcomingConcertsPage: React.FC = () => {
     try {
       setLoading(true);
       setFetchError(null);
+      if (!isSupabaseConfigured) {
+        setFetchError(formatSupabaseQueryError(new Error('Service unavailable')));
+        setEvents([]);
+        return;
+      }
       const data = await fetchEventsMergedWithRetry(supabase);
 
       const now = new Date();
@@ -37,9 +44,8 @@ const UpcomingConcertsPage: React.FC = () => {
 
       setEvents(validEvents);
     } catch (error) {
-      console.error('Error fetching events:', error);
-      const msg = error instanceof Error ? error.message : String(error);
-      setFetchError(msg);
+      devLogBackendFailure('UpcomingConcertsPage.fetchEvents', error);
+      setFetchError(formatSupabaseQueryError(error));
       setEvents([]);
     } finally {
       setLoading(false);

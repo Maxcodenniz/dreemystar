@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { UX_DELAY_MS } from '../utils/uxDelayMs';
 import { Volume2, VolumeX } from 'lucide-react';
 
 interface LoadingScreenProps {
@@ -73,26 +74,31 @@ const LoadingScreen: React.FC<LoadingScreenProps> = ({ onLoadingComplete }) => {
   }, [audioEnabled, attemptPlay]);
 
   useEffect(() => {
-    const logoTimer = setTimeout(() => setShowLogo(true), 500);
+    const logoTimer = setTimeout(() => setShowLogo(true), Math.min(100, UX_DELAY_MS));
 
+    const stepMs = Math.max(16, Math.floor(UX_DELAY_MS / 10));
     const progressTimer = setInterval(() => {
       setProgress(prev => {
         if (prev >= 100) { clearInterval(progressTimer); return 100; }
-        return prev + 7.5;
+        return prev + 10;
       });
-    }, 80);
+    }, stepMs);
 
     return () => { clearTimeout(logoTimer); clearInterval(progressTimer); };
   }, []);
 
   useEffect(() => {
-    if (progress >= 100) {
-      const completeTimer = setTimeout(() => {
-        setFadeOut(true);
-        setTimeout(() => onLoadingComplete(), 500);
-      }, 200);
-      return () => clearTimeout(completeTimer);
-    }
+    if (progress < 100) return;
+    let innerTimer: ReturnType<typeof setTimeout> | undefined;
+    const half = Math.max(50, Math.floor(UX_DELAY_MS / 2));
+    const outerTimer = setTimeout(() => {
+      setFadeOut(true);
+      innerTimer = setTimeout(() => onLoadingComplete(), half);
+    }, half);
+    return () => {
+      clearTimeout(outerTimer);
+      if (innerTimer !== undefined) clearTimeout(innerTimer);
+    };
   }, [progress, onLoadingComplete]);
 
   const toggleAudio = () => {

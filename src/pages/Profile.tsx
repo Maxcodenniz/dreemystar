@@ -7,6 +7,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { User, Upload, X, Mail, Phone, Bell, Save, Sparkles, Calendar, Ticket, Heart, Music, Globe, MapPin, FileText, Image as ImageIcon, Radio, LayoutDashboard, ArrowRight, CheckCircle2, Search, Trash2, AlertTriangle } from 'lucide-react';
 import PhoneInput, { type PhoneValue } from '../components/PhoneInput';
 import { formatFullPhone, parseFullPhone, getDefaultDialCodeFromBrowser } from '../utils/phoneCountryCodes';
+import { SUPER_ADMIN_ID } from '../utils/constants';
 
 function isHeicFile(file: File): boolean {
   return file.type === 'image/heic' || file.type === 'image/heif' || /\.(heic|heif)$/i.test(file.name);
@@ -118,22 +119,32 @@ const Profile: React.FC = () => {
         
         setStats(prev => ({ ...prev, eventsCount: count || 0 }));
       } else {
-        // Fetch tickets and favorites count for fans
-        const [ticketsResult, favoritesResult] = await Promise.all([
+        // Tickets: by user_id OR guest rows tied to this email only (RLS allows email match)
+        const email = userProfile.email?.trim().toLowerCase();
+        const [byUid, byEmail, favoritesResult] = await Promise.all([
           supabase
             .from('tickets')
             .select('*', { count: 'exact', head: true })
             .eq('user_id', userProfile.id)
             .eq('status', 'active'),
+          email
+            ? supabase
+                .from('tickets')
+                .select('*', { count: 'exact', head: true })
+                .is('user_id', null)
+                .ilike('email', email)
+                .eq('status', 'active')
+            : Promise.resolve({ count: 0 }),
           supabase
             .from('favorite_artists')
             .select('*', { count: 'exact', head: true })
             .eq('user_id', userProfile.id)
         ]);
-        
+        const ticketTotal = (byUid.count || 0) + (byEmail.count || 0);
+
         setStats(prev => ({
           ...prev,
-          ticketsCount: ticketsResult.count || 0,
+          ticketsCount: ticketTotal,
           favoritesCount: favoritesResult.count || 0
         }));
       }
@@ -419,7 +430,6 @@ const Profile: React.FC = () => {
     const userId = session.user.id;
 
     // Prevent deleting protected super admin (works even when profile is missing - orphan users)
-    const SUPER_ADMIN_ID = import.meta.env.VITE_SUPER_ADMIN_ID || 'f20cd4f3-4779-4b21-aa79-7d8ce5e02ed8';
     if (userId === SUPER_ADMIN_ID) {
       setError(t('profile.cannotDeleteSuperAdmin'));
       setShowDeleteConfirm(false);

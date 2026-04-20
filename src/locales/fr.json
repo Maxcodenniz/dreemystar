@@ -314,6 +314,7 @@
     "loadingEvents": "Chargement des événements...",
     "eventsLoadErrorTitle": "Les événements n'ont pas pu être chargés correctement",
     "dismiss": "Fermer",
+    "retry": "Réessayer",
     "artistDisplayFallback": "Artiste",
     "paymentSuccess": "Paiement réussi !",
     "paymentMessageCart": "Vos billets ont été achetés avec succès ! Consultez votre email ou téléphone pour les détails de confirmation.",

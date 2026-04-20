@@ -73,7 +73,7 @@ const NewsArticleEditor = lazyWithRetry(() => import('./pages/NewsArticleEditor'
 // ---------------------------------------------------------------------------
 // Shared loading fallback shown while a lazy chunk is being fetched.
 // ---------------------------------------------------------------------------
-const ROUTE_LOAD_STUCK_MS = 14_000;
+const ROUTE_LOAD_STUCK_MS = 8_000;
 
 /** Shown while lazy route chunks load; offers recovery when import() hangs (network / stale deploy). */
 function RouteLoadingFallback() {

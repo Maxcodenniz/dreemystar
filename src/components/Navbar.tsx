@@ -417,7 +417,7 @@ const Navbar: React.FC = () => {
   ] : [];
 
   // Mobile nav items in specified order: Home, Go Live, Schedule, Live Events, Upcoming Concert, Dashboard, Categories
-  const mobileNavItems = [
+  const mobileNavItemsBase = [
     { to: '/', labelKey: 'home' as const },
     ...(isArtist ? [{ to: '/go-live', labelKey: 'goLive' as const, icon: Radio }] : []),
     ...(isArtist || isAdmin || isSuperAdmin ? [{ to: '/schedule', labelKey: 'schedule' as const, icon: Calendar }] : []),
@@ -427,8 +427,10 @@ const Navbar: React.FC = () => {
     ...(bundlesEnabled ? [{ to: '/bundles', labelKey: 'bundles' as const, icon: Ticket }] : []),
     ...(isArtist ? [{ to: '/dashboard', labelKey: 'dashboard' as const, icon: LayoutDashboard }] : []),
     { to: '/categories', labelKey: 'categories' as const },
-    ...(adminNavItems.length > 0 ? adminNavItems : [])
   ];
+  const mobileNavPaths = new Set(mobileNavItemsBase.map((i) => i.to));
+  const mobileNavAdminTail = adminNavItems.filter((item) => !mobileNavPaths.has(item.to));
+  const mobileNavItems = [...mobileNavItemsBase, ...mobileNavAdminTail];
   // For mobile: use ordered list; for other uses (e.g. future) keep combined items
   const allNavItems = [
     ...mainNavItems,

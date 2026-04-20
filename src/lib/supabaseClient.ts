@@ -1,17 +1,19 @@
 import { createClient } from '@supabase/supabase-js';
 import { safeLocalStorage } from '../utils/safeLocalStorage';
+import { devLogSupabaseNotConfiguredOnce } from '../utils/devBackendLog';
 import { SERVICE_UNAVAILABLE } from '../utils/userFacingErrors';
 
 // Trim whitespace and newlines from environment variables (common issue when copying from Supabase dashboard)
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim();
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim();
 
+/** False when Vite env is missing — client is a stub that returns errors (no amount of waiting fixes this). */
+export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
+
 let supabase: any;
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  if (import.meta.env.DEV) {
-    console.error('Missing backend URL or anon key in environment');
-  }
+  devLogSupabaseNotConfiguredOnce();
 
   const notConfiguredError = () => new Error(SERVICE_UNAVAILABLE);
   const mockQueryResult = () =>

@@ -284,7 +284,7 @@ serve(async (req) => {
     // For replay purchase: only block if they already have a REPLAY ticket (having live ticket is OK)
     // For live+replay bundle: block if they have any ticket (live or replay) for this event
     const onlyReplayTickets = isReplay === true && !isLiveReplayBundle;
-    console.log('🔍 Checking for existing tickets:', { finalUserId, email, eventIdsToProcess, isReplay, isLiveReplayBundle });
+    console.log('🔍 Checking for existing tickets:', { finalUserId, finalEmail, email, eventIdsToProcess, isReplay, isLiveReplayBundle });
     
     let existingTickets: any[] = [];
     
@@ -299,8 +299,9 @@ serve(async (req) => {
       }
     }
     
-    if (email && existingTickets.length === 0) {
-      const normalizedEmail = email.toLowerCase().trim();
+    // Use finalEmail (JWT + body), not body `email` alone — otherwise logged-in users skip guest-ticket rows
+    if (finalEmail && existingTickets.length === 0) {
+      const normalizedEmail = finalEmail.toLowerCase().trim();
       let q = supabase.from('tickets').select('event_id, user_id, email').ilike('email', normalizedEmail).in('event_id', eventIdsToProcess).eq('status', 'active');
       if (onlyReplayTickets) {
         q = q.eq('ticket_type', 'replay');

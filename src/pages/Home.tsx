@@ -7,33 +7,12 @@ import FeaturedConcert from '../components/FeaturedConcert';
 import UpcomingConcerts from '../components/UpcomingConcerts';
 import ArtistsSection from '../components/ArtistsSection';
 import { Concert, Artist } from '../types';
-import { supabase } from '../lib/supabaseClient';
+import { supabase, isSupabaseConfigured } from '../lib/supabaseClient';
 import { fetchEventsMergedWithRetry } from '../utils/eventsFetch';
+import { formatSupabaseQueryError } from '../utils/formatSupabaseQueryError';
+import { devLogBackendFailure, devLogSupabaseNotConfiguredOnce } from '../utils/devBackendLog';
 import { CheckCircle, X, Ticket, Sparkles, AlertCircle } from 'lucide-react';
 import ArtistSurveyModal from '../components/ArtistSurveyModal';
-
-/** Human-readable message for PostgREST / network errors (not only timeouts). */
-function formatEventsLoadError(err: unknown): string {
-  if (err == null) return 'Unknown error';
-  if (typeof err === 'string') return err;
-  const o = err as Record<string, unknown>;
-  const msg = typeof o.message === 'string' ? o.message : '';
-  const code = typeof o.code === 'string' ? o.code : '';
-  const hint = typeof o.hint === 'string' ? o.hint : '';
-  const details = typeof o.details === 'string' ? o.details : '';
-  const combined = `${msg} ${details} ${hint}`;
-  if (code === 'PGRST301' || /jwt|JWT|expired|Invalid Refresh Token/i.test(combined)) {
-    return 'Session expired or invalid. Try refreshing the page.';
-  }
-  if (/permission denied|RLS|row-level security/i.test(combined)) {
-    return 'Database access was denied. Check Supabase RLS policies for events and profiles.';
-  }
-  if (/Failed to fetch|NetworkError|Load failed|timed out/i.test(combined)) {
-    return 'Network error or server did not respond. Check your connection and Supabase project status.';
-  }
-  if (msg) return msg;
-  return 'Could not load events.';
-}
 
 const Home: React.FC = () => {
   const { t } = useTranslation();
@@ -76,12 +55,19 @@ const Home: React.FC = () => {
   };
 
   useEffect(() => {
-    let cancelled = false;
     const gen = ++eventsFetchGen.current;
     const isAdmin = userProfile?.user_type === 'global_admin';
 
     // Single full fetch so Upcoming Concerts and hero both get the complete list (avoids "only one event at first" bug)
     const fetchAllEvents = async () => {
+      if (!isSupabaseConfigured) {
+        devLogSupabaseNotConfiguredOnce();
+        if (gen === eventsFetchGen.current) {
+          setEventsFetchError(formatSupabaseQueryError(new Error('Service unavailable')));
+          setLoading(false);
+        }
+        return;
+      }
       try {
         const data = await fetchEventsMergedWithRetry(supabase);
         const valid = filterValidEvents(data, !!isAdmin);
@@ -91,8 +77,8 @@ const Home: React.FC = () => {
         }
       } catch (error) {
         if (gen === eventsFetchGen.current) {
-          console.error('Error fetching events:', error);
-          setEventsFetchError(formatEventsLoadError(error));
+          devLogBackendFailure('Home.fetchAllEvents', error);
+          setEventsFetchError(formatSupabaseQueryError(error));
         }
       } finally {
         if (gen === eventsFetchGen.current) setLoading(false);
@@ -143,7 +129,6 @@ const Home: React.FC = () => {
     window.addEventListener('platformRefresh', handlePlatformRefresh);
 
     return () => {
-      cancelled = true;
       eventsFetchGen.current++;
       clearInterval(refreshInterval);
       window.removeEventListener('platformRefresh', handlePlatformRefresh);
@@ -308,6 +293,12 @@ const Home: React.FC = () => {
   }, [events.length]);
 
   const fetchEvents = async () => {
+    if (!isSupabaseConfigured) {
+      devLogSupabaseNotConfiguredOnce();
+      setEventsFetchError(formatSupabaseQueryError(new Error('Service unavailable')));
+      setLoading(false);
+      return;
+    }
     const isAdmin = userProfile?.user_type === 'global_admin';
     try {
       const data = await fetchEventsMergedWithRetry(supabase);
@@ -315,8 +306,29 @@ const Home: React.FC = () => {
       setEvents(valid);
       setEventsFetchError(null);
     } catch (error) {
-      console.error('Error fetching events:', error);
-      setEventsFetchError(formatEventsLoadError(error));
+      devLogBackendFailure('Home.fetchEvents', error);
+      setEventsFetchError(formatSupabaseQueryError(error));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const retryEventsLoad = async () => {
+    if (!isSupabaseConfigured) {
+      devLogSupabaseNotConfiguredOnce();
+      setEventsFetchError(formatSupabaseQueryError(new Error('Service unavailable')));
+      return;
+    }
+    const isAdmin = userProfile?.user_type === 'global_admin';
+    setLoading(true);
+    setEventsFetchError(null);
+    try {
+      const data = await fetchEventsMergedWithRetry(supabase);
+      const valid = filterValidEvents(data, !!isAdmin);
+      setEvents(valid);
+    } catch (error) {
+      devLogBackendFailure('Home.retryEventsLoad', error);
+      setEventsFetchError(formatSupabaseQueryError(error));
     } finally {
       setLoading(false);
     }
@@ -456,13 +468,22 @@ const Home: React.FC = () => {
               <p className="font-medium text-amber-50">{t('home.eventsLoadErrorTitle')}</p>
               <p className="mt-1 text-amber-100/90 break-words">{eventsFetchError}</p>
             </div>
-            <button
-              type="button"
-              onClick={() => setEventsFetchError(null)}
-              className="flex-shrink-0 rounded-lg px-2 py-1 text-amber-200 hover:bg-white/10"
-            >
-              {t('home.dismiss')}
-            </button>
+            <div className="flex flex-shrink-0 gap-2">
+              <button
+                type="button"
+                onClick={() => void retryEventsLoad()}
+                className="rounded-lg px-3 py-1 font-medium text-amber-950 bg-amber-400/90 hover:bg-amber-300"
+              >
+                {t('home.retry')}
+              </button>
+              <button
+                type="button"
+                onClick={() => setEventsFetchError(null)}
+                className="rounded-lg px-2 py-1 text-amber-200 hover:bg-white/10"
+              >
+                {t('home.dismiss')}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -1342,7 +1342,12 @@ const Schedule: React.FC = () => {
             </div>
           ) : filteredEvents.length > 0 ? (
             <div className="space-y-4">
-              {filteredEvents.map((event) => (
+              {filteredEvents.map((event) => {
+                const displayPrice =
+                  event.price != null && !Number.isNaN(Number(event.price))
+                    ? Number(event.price)
+                    : defaultPrice;
+                return (
                 <div key={event.id} className="bg-gray-800 p-6 rounded-lg hover:bg-gray-700 transition-colors">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-xl font-semibold text-white">{event.title}</h3>
@@ -1430,8 +1435,8 @@ const Schedule: React.FC = () => {
                     </div>
                     <div className="flex items-center text-gray-400">
                       <span className="mr-2">$</span>
-                      <span>${event.price.toFixed(2)}</span>
-                      {event.price === defaultPrice && userProfile?.user_type !== 'global_admin' && (
+                      <span>${displayPrice.toFixed(2)}</span>
+                      {displayPrice === defaultPrice && userProfile?.user_type !== 'global_admin' && (
                         <Lock className="h-3 w-3 ml-1 text-gray-500" />
                       )}
                     </div>
@@ -1460,7 +1465,8 @@ const Schedule: React.FC = () => {
                     </div>
                   )}
                 </div>
-              ))}
+              );
+              })}
             </div>
           ) : (
             <div className="text-center py-8 bg-gray-800 rounded-lg">

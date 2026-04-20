@@ -25,12 +25,19 @@ const AddToCalendarButton: React.FC<AddToCalendarButtonProps> = ({
 }) => {
   const { t } = useTranslation();
   const formatDateForICS = (date: Date): string => {
+    const t = date.getTime();
+    if (!Number.isFinite(t)) {
+      return new Date().toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+    }
     return date.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
   };
 
   const generateICS = (): string => {
     const start = new Date(startDate);
-    const end = endDate ? new Date(endDate) : new Date(start.getTime() + 60 * 60 * 1000); // Default 1 hour
+    const startMs = start.getTime();
+    const end = endDate
+      ? new Date(endDate)
+      : new Date((Number.isFinite(startMs) ? startMs : Date.now()) + 60 * 60 * 1000);
     
     const icsContent = [
       'BEGIN:VCALENDAR',

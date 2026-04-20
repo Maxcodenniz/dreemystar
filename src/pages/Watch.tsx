@@ -14,6 +14,7 @@ import ShareButton from '../components/ShareButton';
 import FollowButton from '../components/FollowButton';
 import SendTipButton from '../components/SendTipButton';
 import AddToCalendarButton from '../components/AddToCalendarButton';
+import { safeEventEndISO, safeToISOString } from '../utils/safeIsoDate';
 import { SimpleVideoPlayer } from '../components/VideoPlayer';
 import { getStoredDeviceId } from '../utils/deviceFingerprint';
 import { appConfigValueEnabled } from '../utils/appConfigBoolean';
@@ -1829,19 +1830,17 @@ const Watch: React.FC = () => {
                       variant="button"
                       className="w-full"
                     />
-                    {event.start_time && (
+                    {safeToISOString(event.start_time) ? (
                       <AddToCalendarButton
                         title={event.title}
                         description={event.description || ''}
-                        startDate={event.start_time}
-                        endDate={event.start_time && event.duration 
-                          ? new Date(new Date(event.start_time).getTime() + event.duration * 60000).toISOString()
-                          : undefined}
+                        startDate={safeToISOString(event.start_time)!}
+                        endDate={safeEventEndISO(event.start_time, event.duration) ?? undefined}
                         url={`${window.location.origin}/watch/${event.id}`}
                         variant="compact"
                         className="w-full"
                       />
-                    )}
+                    ) : null}
                   </div>
                 </div>
               )}

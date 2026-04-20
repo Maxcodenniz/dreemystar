@@ -11,14 +11,28 @@ import { supabase } from './lib/supabaseClient';
 import { useStore } from './store/useStore';
 import { subscribeAuthToStore } from './utils/authSync';
 import { registerGlobalChunkImportRecovery, syncBuildIdAndClearChunkRecovery } from './utils/lazyWithRetry';
-import { useState, useEffect } from 'react';
+import { devLogBackendFailure } from './utils/devBackendLog';
+import { withTimeout } from './utils/eventsFetch';
+import { useState, useEffect, useCallback } from 'react';
 
 syncBuildIdAndClearChunkRecovery();
 registerGlobalChunkImportRecovery();
 
-// Console override disabled – in-app log console removed.
-// To re-enable for debugging: set ?console=true or localStorage mobileConsoleEnabled=true
-// and render <MobileConsole /> in App.tsx
+/** Dedupe concurrent getSession (React 18 Strict Mode runs effects twice in DEV). */
+let getSessionInflight: ReturnType<typeof supabase.auth.getSession> | null = null;
+function getSessionDeduplicated() {
+  if (!getSessionInflight) {
+    getSessionInflight = supabase.auth.getSession().finally(() => {
+      getSessionInflight = null;
+    });
+  }
+  return getSessionInflight;
+}
+
+const BOOTSTRAP_FAILSAFE_MS = 18_000;
+const PROFILE_HYDRATE_MS = 5_000;
+
+type GetSessionResult = Awaited<ReturnType<typeof supabase.auth.getSession>>;
 
 const AppWithLoading = () => {
   const [showLoading, setShowLoading] = useState(true);
@@ -30,98 +44,110 @@ const AppWithLoading = () => {
     return unsubscribe;
   }, []);
 
-  // Initialize auth state
+  // Initialize auth state (getSession deduped for Strict Mode double-invoke in DEV)
   useEffect(() => {
-    let timeoutId: NodeJS.Timeout;
-    
+    let failSafeTimer: ReturnType<typeof setTimeout> | undefined;
+    let cancelled = false;
+
     const initializeAuth = async () => {
       try {
-        // Check if this is an email confirmation redirect
-        // If so, let SignInForm handle it - don't block here
         const hasHashFragment = window.location.hash.includes('access_token') || window.location.hash.includes('type=signup');
         const urlParams = new URLSearchParams(window.location.search);
         const isEmailConfirmation = hasHashFragment || urlParams.get('confirmed') === 'true';
-        
-        // For email confirmation, skip blocking auth check - let SignInForm handle it
+
         if (isEmailConfirmation) {
-          console.log('Email confirmation detected - letting SignInForm handle it');
-          useStore.getState().setInitialized(true);
-          setAppInitialized(true);
-          return;
-        }
-        
-        // Failsafe: never block the shell on hung Supabase (slow getSession is OK below)
-        timeoutId = setTimeout(() => {
           if (import.meta.env.DEV) {
-            console.warn('Auth initialization timeout - proceeding anyway');
+            console.log('Email confirmation detected - letting SignInForm handle it');
           }
           useStore.getState().setInitialized(true);
           setAppInitialized(true);
-        }, 12000);
+          setShowLoading(false);
+          return;
+        }
 
-        const { data: { session } } = await supabase.auth.getSession();
+        const sessionPromise = getSessionDeduplicated().finally(() => {
+          if (failSafeTimer !== undefined) {
+            clearTimeout(failSafeTimer);
+            failSafeTimer = undefined;
+          }
+        });
+
+        const failSafeSession = new Promise<GetSessionResult>((resolve) => {
+          failSafeTimer = setTimeout(() => {
+            failSafeTimer = undefined;
+            if (cancelled) return;
+            devLogBackendFailure(
+              'main.authBootstrapTimeout',
+              new Error(`getSession() did not finish within ${BOOTSTRAP_FAILSAFE_MS / 1000}s`),
+              { hint: 'Often: missing/wrong VITE_* env, slow network to Supabase, or stub client.' }
+            );
+            resolve({ data: { session: null }, error: null });
+          }, BOOTSTRAP_FAILSAFE_MS);
+        });
+
+        const raceResult = await Promise.race([sessionPromise, failSafeSession]);
+        if (cancelled) return;
+
+        const session = raceResult?.data?.session ?? null;
+
         const store = useStore.getState();
-
         if (session?.user) {
           store.setUser(session.user);
         }
-
-        // Unblock UI immediately after session — do not await profiles (deployed
-        // sites were stuck on "Initializing…" when /profiles was slow or hung).
         store.setInitialized(true);
-        clearTimeout(timeoutId);
         setAppInitialized(true);
+        setShowLoading(false);
 
         if (session?.user) {
           void (async () => {
             try {
-              const { data: profile } = await supabase
-                .from('profiles')
-                .select('*')
-                .eq('id', session.user.id)
-                .maybeSingle();
-              if (profile) {
+              const { data: profile } = await withTimeout(
+                supabase
+                  .from('profiles')
+                  .select('*')
+                  .eq('id', session.user.id)
+                  .maybeSingle(),
+                PROFILE_HYDRATE_MS,
+                'main.hydrateProfileAfterSession'
+              );
+              if (profile && !cancelled) {
                 useStore.getState().setUserProfile(profile);
               }
-            } catch {
-              // Profile may load later via authSync or page code
+            } catch (e) {
+              devLogBackendFailure('main.hydrateProfileAfterSession', e, { userId: session.user.id });
             }
           })();
         }
       } catch (error) {
-        console.error('Error initializing auth:', error);
-        useStore.getState().setInitialized(true);
-        if (timeoutId) clearTimeout(timeoutId);
-        setAppInitialized(true);
+        devLogBackendFailure('main.initializeAuth', error);
+        if (!cancelled) {
+          useStore.getState().setInitialized(true);
+          setAppInitialized(true);
+          setShowLoading(false);
+        }
       }
     };
 
-    initializeAuth();
+    void initializeAuth();
 
     return () => {
-      if (timeoutId) clearTimeout(timeoutId);
+      cancelled = true;
+      if (failSafeTimer !== undefined) {
+        clearTimeout(failSafeTimer);
+      }
     };
   }, []);
 
-  const handleLoadingComplete = () => {
+  const handleLoadingComplete = useCallback(() => {
     setShowLoading(false);
-  };
-
-  // Add a maximum loading time to prevent infinite loading
-  useEffect(() => {
-    const maxLoadingTimer = setTimeout(() => {
-      if (import.meta.env.DEV) {
-        console.warn('Maximum loading time reached - forcing app to render');
-      }
-      setShowLoading(false);
-      if (!appInitialized) {
-        useStore.getState().setInitialized(true);
-        setAppInitialized(true);
-      }
-    }, 10000); // 10 seconds maximum
-
-    return () => clearTimeout(maxLoadingTimer);
   }, []);
+
+  // End loading animation if auth finished first (avoids waiting on animation while shell is ready)
+  useEffect(() => {
+    if (appInitialized) {
+      setShowLoading(false);
+    }
+  }, [appInitialized]);
 
   // Show loading screen until both auth is initialized and loading animation completes
   if (showLoading || !appInitialized) {

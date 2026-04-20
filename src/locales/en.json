@@ -270,6 +270,7 @@
     "loadingEvents": "Loading events...",
     "eventsLoadErrorTitle": "Events could not be loaded completely",
     "dismiss": "Dismiss",
+    "retry": "Retry",
     "artistDisplayFallback": "Artist",
     "paymentSuccess": "Payment Successful!",
     "paymentMessageCart": "Your tickets have been purchased successfully! Check your email or phone for confirmation details.",

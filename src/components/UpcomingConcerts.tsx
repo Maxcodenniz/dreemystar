@@ -15,6 +15,7 @@ import MobileMoneyCountryModal from './MobileMoneyCountryModal';
 import FollowButton from './FollowButton';
 import SendTipButton from './SendTipButton';
 import AddToCalendarButton from './AddToCalendarButton';
+import { safeEventEndISO, safeToISOString } from '../utils/safeIsoDate';
 import SmartImage from './SmartImage';
 
 interface Advertisement {
@@ -482,14 +483,16 @@ const ConcertCard: React.FC<{ concert: Concert; artist: Artist }> = ({ concert, 
               artistName={artist.name}
               variant="compact"
             />
+            {safeToISOString(concert.date) ? (
             <AddToCalendarButton
               title={concert.title}
               description={`${artist.name} - ${concert.description || ''}`}
-              startDate={typeof concert.date === 'string' ? concert.date : new Date(concert.date).toISOString()}
-              endDate={new Date(new Date(concert.date).getTime() + concert.duration * 60000).toISOString()}
+              startDate={safeToISOString(concert.date)!}
+              endDate={safeEventEndISO(concert.date, concert.duration) ?? undefined}
               url={`${window.location.origin}/watch/${concert.id}`}
               variant="compact"
             />
+            ) : null}
           </div>
         </div>
 

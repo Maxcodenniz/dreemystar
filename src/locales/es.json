@@ -314,6 +314,7 @@
     "loadingEvents": "Cargando eventos...",
     "eventsLoadErrorTitle": "No se pudieron cargar los eventos correctamente",
     "dismiss": "Cerrar",
+    "retry": "Reintentar",
     "artistDisplayFallback": "Artista",
     "paymentSuccess": "¡Pago exitoso!",
     "paymentMessageCart": "¡Tus entradas se han comprado correctamente! Revisa tu correo o teléfono para los detalles de confirmación.",

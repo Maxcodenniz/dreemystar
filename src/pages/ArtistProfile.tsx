@@ -13,6 +13,7 @@ import ShareButton from '../components/ShareButton';
 import SendTipButton from '../components/SendTipButton';
 import FollowButton from '../components/FollowButton';
 import AddToCalendarButton from '../components/AddToCalendarButton';
+import { safeEventEndISO, safeToISOString } from '../utils/safeIsoDate';
 import SmartImage from '../components/SmartImage';
 import { useCartStore } from '../store/useCartStore';
 import { hasActiveTicket, extractFunctionError } from '../utils/ticketUtils';
@@ -712,14 +713,16 @@ const EventCardWithTickets: React.FC<{ event: EventData; artistId: string; artis
                 variant="compact"
               />
             )}
+            {safeToISOString(event.start_time) ? (
             <AddToCalendarButton
               title={event.title}
               description={event.description || ''}
-              startDate={event.start_time}
-              endDate={new Date(eventEnd).toISOString()}
+              startDate={safeToISOString(event.start_time)!}
+              endDate={safeEventEndISO(event.start_time, event.duration) ?? undefined}
               url={`${window.location.origin}/watch/${event.id}`}
               variant="compact"
             />
+            ) : null}
           </div>
 
           {/* Purchase buttons - only show if event has price and hasn't ended */}

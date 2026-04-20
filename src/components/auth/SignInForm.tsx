@@ -43,7 +43,9 @@ const SignInForm: React.FC = () => {
   // Listen for auth state changes (to detect session creation from email confirmation)
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log('Auth state changed:', event, session?.user?.email);
+      if (import.meta.env.DEV) {
+        console.log('Auth state changed:', event, session?.user?.email);
+      }
       
       if (event === 'SIGNED_IN' && session?.user) {
         // User was signed in (possibly from email confirmation)

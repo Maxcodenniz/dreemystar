@@ -101,14 +101,15 @@ export async function hasLiveTicket(
         .or('ticket_type.eq.live,ticket_type.is.null');
 
     const byUserId = async (uid: string) => {
-      const { data, error } = await liveTypeOrNull().eq('user_id', uid).maybeSingle();
+      // limit(1): multiple matching rows (e.g. data quirks) must not make maybeSingle() error → false negative
+      const { data, error } = await liveTypeOrNull().eq('user_id', uid).limit(1).maybeSingle();
       if (error) return false;
       return !!data;
     };
 
     const byEmail = async (em: string) => {
       const normalizedEmail = em.toLowerCase().trim();
-      const { data, error } = await liveTypeOrNull().ilike('email', normalizedEmail).maybeSingle();
+      const { data, error } = await liveTypeOrNull().ilike('email', normalizedEmail).limit(1).maybeSingle();
       if (error) return false;
       return !!data;
     };
@@ -148,14 +149,14 @@ export async function hasReplayTicket(
         .eq('ticket_type', 'replay');
 
     const byUserId = async (uid: string) => {
-      const { data, error } = await replayBase().eq('user_id', uid).maybeSingle();
+      const { data, error } = await replayBase().eq('user_id', uid).limit(1).maybeSingle();
       if (error) return false;
       return !!data;
     };
 
     const byEmail = async (em: string) => {
       const normalizedEmail = em.toLowerCase().trim();
-      const { data, error } = await replayBase().ilike('email', normalizedEmail).maybeSingle();
+      const { data, error } = await replayBase().ilike('email', normalizedEmail).limit(1).maybeSingle();
       if (error) return false;
       return !!data;
     };
